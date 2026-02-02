@@ -10,15 +10,15 @@ import numpy as np
 
 #import theano
 #import theano.tensor as T
-import tensorflow as tf
+import tensorflow
 from tensorflow import concat
 from tensorflow.keras import backend as K
-from tensorflow.keras import initializers import RandomNormal
-from tensorflow.keras.regularizers import l2, activity_l2
-from tensorflow.keras.models import Sequential, Graph, Model
+from tensorflow.keras.initializers import RandomNormal
+from tensorflow.keras.regularizers import l2 #, activity_l2
+from tensorflow.keras.models import Sequential,Model # Graph, 
 from tensorflow.keras.layers import Dense, Lambda, Activation
-from tensorflow.keras.layers import Embedding, Input, Dense, Reshape, Flatten, Dropout, Multiply
-from tensorflow.keras.constraints import maxnorm
+from tensorflow.keras.layers import Embedding, Input, Dense, Reshape, Flatten, Dropout, Concatenate
+#from tensorflow.keras.constraints import maxnorm
 from tensorflow.keras.optimizers import Adagrad, Adam, SGD, RMSprop
 from evaluate import evaluate_model
 from Dataset import Dataset
@@ -30,11 +30,11 @@ import multiprocessing as mp
 #################### Arguments ####################
 def parse_args():
   parser = argparse.ArgumentParser(description="Run MLP.")
-  parser.add_argument('--path', nargs='?', default='Data/',
+  parser.add_argument('--path', nargs='?', default= '/content/neural_collaborative_filtering/Data/',
                         help='Input data path.')
   parser.add_argument('--dataset', nargs='?', default='ml-1m',
                         help='Choose a dataset.')
-  parser.add_argument('--epochs', type=int, default=100,
+  parser.add_argument('--epochs', type=int, default=5,
                         help='Number of epochs.')
   parser.add_argument('--batch_size', type=int, default=256,
                         help='Batch size.')
@@ -65,25 +65,25 @@ def get_model(num_users, num_items, layers = [20,10], reg_layers=[0,0]):
   item_input = Input(shape=(1,), dtype='int32', name = 'item_input')
 
   MLP_Embedding_User = Embedding(input_dim = num_users, 
-                                output_dim = layers[0]/2, 
+                                output_dim = int(layers[0]/2), 
                                 name = 'user_embedding',
                                 embeddings_initializer = init_normal(), 
-                                embeddings_regularizer = l2(reg_layers[0]), 
-                                input_length=1)
+                                embeddings_regularizer = l2(reg_layers[0]) 
+                                )
     
   MLP_Embedding_Item = Embedding(input_dim = num_items, 
-                                output_dim = layers[0]/2,
+                                output_dim = int(layers[0]/2),
                                 name = 'item_embedding',
                                 embeddings_initializer = init_normal(), 
-                                embeddings_regularizer = l2(reg_layers[0]), 
-                                input_length=1)   
+                                embeddings_regularizer = l2(reg_layers[0]) 
+                                )   
     
   # Crucial to flatten an embedding vector!
   user_latent = Flatten()(MLP_Embedding_User(user_input))
   item_latent = Flatten()(MLP_Embedding_Item(item_input))
     
   # The 0-th layer is the concatenation of embedding layers
-  vector = concat([user_latent, item_latent], axis=0)
+  vector = Concatenate()([user_latent, item_latent])
     
     
   # MLP layers
@@ -100,8 +100,8 @@ def get_model(num_users, num_items, layers = [20,10], reg_layers=[0,0]):
                     name = 'prediction'
                     )(vector)
     
-  model = Model(input=[user_input, item_input], 
-                output=prediction)
+  model = Model(inputs=[user_input, item_input], 
+                outputs=prediction)
     
   return model
 
@@ -116,11 +116,11 @@ def get_train_instances(train, num_negatives, num_items):
   # negative instances
     for t in range(num_negatives):
       j = np.random.randint(num_items)
-      while train.has_key((u, j)):
+      while (u, j) in train:
         j = np.random.randint(num_items)
-        user_input.append(u)
-        item_input.append(j)
-        labels.append(0)
+      user_input.append(u)
+      item_input.append(j)
+      labels.append(0)
   return user_input, item_input, labels
 
 if __name__ == '__main__':
@@ -152,13 +152,13 @@ if __name__ == '__main__':
   # Build model
   model = get_model(num_users, num_items, layers, reg_layers)
   if learner.lower() == "adagrad": 
-    optimizer=Adagrad(lr=learning_rate)
+    optimizer=Adagrad(learning_rate=learning_rate)
   elif learner.lower() == "rmsprop":
-    optimizer=RMSprop(lr=learning_rate), loss='binary_crossentropy')
+    optimizer=RMSprop(learning_rate=learning_rate)
   elif learner.lower() == "adam":
-    optimizer=Adam(lr=learning_rate)
+    optimizer=Adam(learning_rate=learning_rate)
   else:
-    optimizer=SGD(lr=learning_rate) 
+    optimizer=SGD(learning_rate=learning_rate) 
 
   model.compile(optimizer=optimizer, loss='binary_crossentropy')  
     
@@ -173,13 +173,19 @@ if __name__ == '__main__':
   for epoch in range(epochs):
     t1 = time()
     # Generate training instances
-    user_input, item_input, labels = get_train_instances(train, num_negatives)
+    user_input, item_input, labels = get_train_instances(train, num_negatives, num_items)
     
     # Training        
     hist = model.fit([np.array(user_input), np.array(item_input)], #input
                       np.array(labels), # labels 
-                      batch_size=batch_size, nb_epoch=1, verbose=0, shuffle=True)
+                      batch_size=batch_size, 
+                      epochs=1, 
+                      verbose=0, 
+                      shuffle=True)
     t2 = time()
+
+    print(f"Epoch {epoch+1} done in {t2-t1:.2f}s")
+    
 
     # Evaluation
     if epoch %verbose == 0:
@@ -190,8 +196,9 @@ if __name__ == '__main__':
 
       if hr > best_hr:
         best_hr, best_ndcg, best_iter = hr, ndcg, epoch
-          if args.out > 0:
-            model.save_weights(model_out_file, overwrite=True)
+
+        if args.out > 0:
+          model.save_weights(model_out_file, overwrite=True)
 
   print("End. Best Iteration %d:  HR = %.4f, NDCG = %.4f. " %(best_iter, best_hr, best_ndcg))
 
